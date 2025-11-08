@@ -17,7 +17,7 @@
 class Minibot {
 private:
     const char* robotId;
-    uint8_t pins[4];  // [left, right, dc, servo]
+    uint8_t pins[2];  // [left, right]
 
     uint8_t leftX, leftY, rightX, rightY;
     uint8_t buttons;  // bitfield
@@ -37,7 +37,7 @@ private:
     void writeMotor(uint8_t channel, float value);
 
 public:
-    Minibot(const char* id, uint8_t l=16, uint8_t r=17, uint8_t d=18, uint8_t s=19);
+    Minibot(const char* id, uint8_t l=16, uint8_t r=17);
 
     void updateController();
 
@@ -58,8 +58,6 @@ public:
     // Motor control
     void driveLeft(float value);
     void driveRight(float value);
-    void driveDCMotor(float value);
-    void driveServoMotor(int angle);
 };
 
 #endif

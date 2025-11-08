@@ -5,7 +5,7 @@
  * QUICK START:
  * 1. Change ROBOT_NAME to your robot's unique name (line 15)
  * 2. Choose your robot type (line 18) - uncomment ONE option
- * 3. Adjust pin numbers if needed (lines 21-24)
+ * 3. Adjust pin numbers if needed (lines 21-22)
  * 4. Upload to ESP32
  * 5. Done! Robot will auto-connect to driver station
  */
@@ -20,14 +20,11 @@
 // Choose your robot type (uncomment ONE):
 #define ROBOT_TYPE_TANK_DRIVE      // Two motors, left and right (most common)
 //#define ROBOT_TYPE_ARCADE_DRIVE  // Two motors, arcade-style control
-//#define ROBOT_TYPE_MECANUM       // Four motors, omni-directional
 //#define ROBOT_TYPE_CUSTOM        // Write your own control code
 
 // Motor pin configuration (adjust if using different pins)
 #define LEFT_MOTOR_PIN   18    // Left motor PWM pin
 #define RIGHT_MOTOR_PIN  19    // Right motor PWM pin
-#define DC_MOTOR_PIN     20    // DC motor or back-left for mecanum
-#define SERVO_MOTOR_PIN  20    // Servo or back-right for mecanum
 
 // Advanced settings (usually don't need to change)
 #define DEADZONE 10            // Joystick deadzone (0-127)
@@ -38,7 +35,7 @@
 // ============ END CONFIGURATION ============
 
 // Create robot instance
-Minibot bot(ROBOT_NAME, LEFT_MOTOR_PIN, RIGHT_MOTOR_PIN, DC_MOTOR_PIN, SERVO_MOTOR_PIN);
+Minibot bot(ROBOT_NAME, LEFT_MOTOR_PIN, RIGHT_MOTOR_PIN);
 
 // Helper function: Apply deadzone and scale
 float applyDeadzone(uint8_t value, uint8_t deadzone = DEADZONE) {
@@ -61,8 +58,6 @@ void setup() {
         "Tank Drive"
     #elif defined(ROBOT_TYPE_ARCADE_DRIVE)
         "Arcade Drive"
-    #elif defined(ROBOT_TYPE_MECANUM)
-        "Mecanum Drive"
     #elif defined(ROBOT_TYPE_CUSTOM)
         "Custom"
     #else
@@ -106,18 +101,6 @@ void loop() {
 
             bot.driveLeft(leftSpeed);
             bot.driveRight(rightSpeed);
-
-            // Optional: DC motor controlled by left stick X
-            bot.driveDCMotor(leftX);
-
-            // Optional: Servo controlled by buttons
-            if (btnTriangle) {
-                bot.driveServoMotor(45);   // Triangle = servo right
-            } else if (btnSquare) {
-                bot.driveServoMotor(-45);  // Square = servo left
-            } else {
-                bot.driveServoMotor(0);    // Center
-            }
         }
 
         #elif defined(ROBOT_TYPE_ARCADE_DRIVE)
@@ -145,49 +128,6 @@ void loop() {
 
             bot.driveLeft(leftSpeed);
             bot.driveRight(rightSpeed);
-
-            // Optional: DC motor speed control with left stick X
-            bot.driveDCMotor(leftX);
-
-            // Optional: Servo position with buttons
-            if (btnTriangle) {
-                bot.driveServoMotor(45);
-            } else if (btnSquare) {
-                bot.driveServoMotor(-45);
-            } else {
-                bot.driveServoMotor(0);
-            }
-        }
-
-        #elif defined(ROBOT_TYPE_MECANUM)
-        // MECANUM DRIVE (4-wheel omni-directional)
-        // Uses all 4 motor outputs
-        {
-            float forward = -leftY;   // Forward/backward
-            float strafe = leftX;     // Left/right strafing
-            float turn = rightX;      // Rotation
-
-            // Mecanum wheel mixing
-            float frontLeft = forward + strafe + turn;
-            float frontRight = forward - strafe - turn;
-            float backLeft = forward - strafe + turn;
-            float backRight = forward + strafe - turn;
-
-            // Normalize speeds
-            float maxMag = max(max(abs(frontLeft), abs(frontRight)),
-                              max(abs(backLeft), abs(backRight)));
-            if (maxMag > 1.0) {
-                frontLeft /= maxMag;
-                frontRight /= maxMag;
-                backLeft /= maxMag;
-                backRight /= maxMag;
-            }
-
-            // Apply to motors
-            bot.driveLeft(frontLeft);      // Front left
-            bot.driveRight(frontRight);    // Front right
-            bot.driveDCMotor(backLeft);    // Back left
-            bot.driveServoMotor((int)(backRight * 50));  // Back right (using servo output)
         }
 
         #elif defined(ROBOT_TYPE_CUSTOM)
@@ -203,7 +143,6 @@ void loop() {
             //   - leftX, leftY, rightX, rightY (joystick values, -1.0 to 1.0)
             //   - btnCross, btnCircle, btnSquare, btnTriangle (button states)
             //   - bot.driveLeft(speed), bot.driveRight(speed)
-            //   - bot.driveDCMotor(speed), bot.driveServoMotor(angle)
         }
 
         #else
@@ -216,8 +155,6 @@ void loop() {
         // Not in teleop mode - stop all motors
         bot.driveLeft(0);
         bot.driveRight(0);
-        bot.driveDCMotor(0);
-        bot.driveServoMotor(0);
     }
 
     // Small delay for stability (don't remove)
