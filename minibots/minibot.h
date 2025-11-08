@@ -11,7 +11,7 @@
 
 // WiFi Configuration
 #define WIFI_SSID "WATCHTOWER"
-#define WIFI_PASSWORD "lancerrobotics"
+#define WIFI_PASSWORD "lancerrobotic"
 #define DISCOVERY_PORT 12345
 
 class Minibot {
