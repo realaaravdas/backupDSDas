@@ -148,7 +148,9 @@ class DriverStation:
                         # Send port assignment
                         robot_info = self.robots[robot_id]
                         response = f"PORT:{robot_id}:{robot_info.port}"
-                        self.udp_socket.sendto(response.encode(), (robot_ip, DISCOVERY_PORT))
+                        # Send response back to the address we received from (handles localhost demo mode)
+                        # For real robots with unique IPs, this still works correctly
+                        self.udp_socket.sendto(response.encode(), addr)
                         robot_info.connected = True
                         
             except socket.timeout:
