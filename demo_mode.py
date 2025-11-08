@@ -20,21 +20,24 @@ class SimulatedRobot:
         self.running = True
         self.assigned_port = None
         
-        # Create UDP socket
+        # Create UDP socket - for demo mode, we can't use SO_REUSEPORT effectively
+        # because all robots share localhost and messages get distributed randomly.
+        # Instead, bind to any available port (0) and the driver station will respond
+        # to the actual sender address.
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.udp_socket.bind(('', DISCOVERY_PORT + 100 + hash(robot_id) % 100))
+        self.udp_socket.bind(('', 0))  # Bind to any available port
         self.udp_socket.settimeout(0.5)
+        self.listen_port = self.udp_socket.getsockname()[1]
         
-        print(f"Simulated robot '{robot_id}' created")
+        print(f"Simulated robot '{robot_id}' created, listening on port {self.listen_port}")
     
     def send_discovery(self):
         """Send discovery broadcast"""
         message = f"DISCOVER:{self.robot_id}:{self.ip}"
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.sendto(message.encode(), ('127.0.0.1', DISCOVERY_PORT))
-        sock.close()
+        # Use the bound socket to send, just like ESP32 does
+        # This ensures we send FROM the port we're listening on
+        self.udp_socket.sendto(message.encode(), ('127.0.0.1', DISCOVERY_PORT))
         print(f"[{self.robot_id}] Sent discovery: {message}")
     
     def listen_for_commands(self):
@@ -44,15 +47,31 @@ class SimulatedRobot:
                 data, addr = self.udp_socket.recvfrom(1024)
                 message = data.decode('utf-8', errors='ignore')
                 
-                # Check for port assignment
-                if message.startswith("PORT:"):
+                # Check for port assignment (when not yet connected)
+                if message.startswith("PORT:") and self.assigned_port is None:
                     parts = message.split(":")
-                    if len(parts) >= 3 and parts[1] == self.robot_id:
-                        self.assigned_port = int(parts[2])
-                        print(f"[{self.robot_id}] Assigned port: {self.assigned_port}")
+                    if len(parts) >= 3:
+                        target_robot = parts[1]
+                        if target_robot == self.robot_id:
+                            new_port = int(parts[2])
+                            print(f"[{self.robot_id}] Received port assignment: {new_port}")
+                        else:
+                            # Message for another robot (due to SO_REUSEPORT distribution)
+                            print(f"[{self.robot_id}] Ignoring PORT message for {target_robot}")
+                            continue
+                        
+                        # Close old socket and bind to new assigned port
+                        print(f"[{self.robot_id}] Closing old socket and switching to port {new_port}")
+                        self.udp_socket.close()
+                        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        self.udp_socket.bind(('', new_port))
+                        self.udp_socket.settimeout(0.5)
+                        self.assigned_port = new_port
+                        print(f"[{self.robot_id}] Successfully switched to assigned port: {self.assigned_port}")
                 
                 # Check for game status
-                elif message.startswith(self.robot_id):
+                elif message.startswith(self.robot_id) and ':' in message:
                     sep_index = message.index(":")
                     status = message[sep_index + 1:]
                     print(f"[{self.robot_id}] Game status: {status}")
