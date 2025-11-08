@@ -4,20 +4,22 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <driver/ledc.h>
 
 // PWM settings
 #define PWM_FREQ 100
 #define PWM_RES 16
 
 // WiFi Configuration
-#define WIFI_SSID "WATCHTOWER"
-#define WIFI_PASSWORD "lancerrobotic"
+#define WIFI_SSID "RoboNet"
+#define WIFI_PASSWORD "robo8711"
 #define DISCOVERY_PORT 12345
 
 class Minibot {
 private:
     const char* robotId;
-    uint8_t pins[4];  // [left, right, dc, servo]
+    uint8_t leftPin, rightPin;
+    uint8_t leftChannel, rightChannel;
 
     uint8_t leftX, leftY, rightX, rightY;
     uint8_t buttons;  // bitfield
@@ -37,7 +39,7 @@ private:
     void writeMotor(uint8_t channel, float value);
 
 public:
-    Minibot(const char* id, uint8_t l=16, uint8_t r=17, uint8_t d=18, uint8_t s=19);
+    Minibot(const char* id, uint8_t l=16, uint8_t r=17);
 
     void updateController();
 
@@ -58,8 +60,6 @@ public:
     // Motor control
     void driveLeft(float value);
     void driveRight(float value);
-    void driveDCMotor(float value);
-    void driveServoMotor(int angle);
 };
 
 #endif

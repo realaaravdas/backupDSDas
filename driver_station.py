@@ -122,7 +122,10 @@ class DriverStation:
                 # Listen for discovery packets
                 data, addr = self.udp_socket.recvfrom(1024)
                 message = data.decode('utf-8', errors='ignore')
-                
+
+                # Debug: Print ALL received packets
+                print(f"[DEBUG] Received packet from {addr}: {message[:50]}")
+
                 # Parse discovery message: "DISCOVER:<robotId>:<IP>" or "DISCOVER:<robotId>:<IP>:<port>"
                 if message.startswith("DISCOVER:"):
                     parts = message.split(":")

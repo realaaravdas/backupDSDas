@@ -1,29 +1,74 @@
 #include "minibot.h"
 
-Minibot::Minibot(const char* id, uint8_t l, uint8_t r, uint8_t d, uint8_t s)
-    : robotId(id), leftX(127), leftY(127), rightX(127), rightY(127),
+// PWM channels (0-7 for low speed mode)
+#define LEFT_MOTOR_CHANNEL  LEDC_CHANNEL_0
+#define RIGHT_MOTOR_CHANNEL LEDC_CHANNEL_1
+#define PWM_TIMER           LEDC_TIMER_0
+#define PWM_SPEED_MODE      LEDC_LOW_SPEED_MODE
+
+Minibot::Minibot(const char* id, uint8_t l, uint8_t r)
+    : robotId(id), leftPin(l), rightPin(r),
+      leftChannel(LEFT_MOTOR_CHANNEL), rightChannel(RIGHT_MOTOR_CHANNEL),
+      leftX(127), leftY(127), rightX(127), rightY(127),
       buttons(0), gameStatus(0), emergencyStop(false), connected(false),
       assignedPort(0), lastPingTime(0), lastCommandTime(0)
 {
-    pins[0] = l; pins[1] = r; pins[2] = d; pins[3] = s;
-
     Serial.begin(115200);
+    delay(100);
     Serial.println("\n=== Minibot Starting ===");
+    Serial.println("2-Motor Drive Configuration");
 
-    // Setup PWM channels
-    for(uint8_t i = 0; i < 4; i++) {
-        pinMode(pins[i], OUTPUT);
-        ledcAttach(pins[i], PWM_FREQ, PWM_RES);
-    }
+    // Pin configuration
+    Serial.println("Pin configuration:");
+    Serial.print("  Left Motor:  GPIO"); Serial.println(leftPin);
+    Serial.print("  Right Motor: GPIO"); Serial.println(rightPin);
+
+    // 1. Configure PWM Timer
+    ledc_timer_config_t timer_conf;
+    timer_conf.speed_mode = PWM_SPEED_MODE;
+    timer_conf.timer_num = PWM_TIMER;
+    timer_conf.duty_resolution = (ledc_timer_bit_t)PWM_RES;
+    timer_conf.freq_hz = PWM_FREQ;
+    ledc_timer_config(&timer_conf);
+
+    // 2. Configure Left Motor Channel
+    ledc_channel_config_t left_channel_conf;
+    left_channel_conf.gpio_num = leftPin;
+    left_channel_conf.speed_mode = PWM_SPEED_MODE;
+    left_channel_conf.channel = leftChannel;
+    left_channel_conf.intr_type = LEDC_INTR_DISABLE;
+    left_channel_conf.timer_sel = PWM_TIMER;
+    left_channel_conf.duty = 0;
+    left_channel_conf.hpoint = 0;
+    ledc_channel_config(&left_channel_conf);
+
+    // 3. Configure Right Motor Channel
+    ledc_channel_config_t right_channel_conf = left_channel_conf; // Copy config
+    right_channel_conf.gpio_num = rightPin;
+    right_channel_conf.channel = rightChannel;
+    ledc_channel_config(&right_channel_conf);
+
+    Serial.println("PWM setup complete (using ESP-IDF).");
 
     // Connect to WiFi
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.print("WiFi");
-    while(WiFi.status() != WL_CONNECTED) {
+    Serial.print("WiFi connecting");
+    int attempts = 0;
+    while(WiFi.status() != WL_CONNECTED && attempts < 20) {
         delay(500);
         Serial.print(".");
+        attempts++;
     }
-    Serial.println("\nIP: " + WiFi.localIP().toString());
+
+    if(WiFi.status() == WL_CONNECTED) {
+        Serial.println("\nConnected!");
+        Serial.print("IP: ");
+        Serial.println(WiFi.localIP());
+    } else {
+        Serial.println("\nFailed to connect!");
+        Serial.print("SSID: "); Serial.println(WIFI_SSID);
+        Serial.print("Password: "); Serial.println(WIFI_PASSWORD);
+    }
 
     // Start UDP
     udp.begin(DISCOVERY_PORT);
@@ -40,19 +85,26 @@ void Minibot::sendDiscoveryPing() {
 }
 
 void Minibot::stopAllMotors() {
-    for(uint8_t i = 0; i < 4; i++) {
-        ledcWrite(pins[i], 9830); // 1.5ms neutral
-    }
+    // 1.5ms neutral pulse for 100Hz, 16-bit res -> duty cycle of 9830
+    uint32_t neutral_duty = (uint32_t)((1.5 / 10.0) * (1 << PWM_RES));
+    ledc_set_duty(PWM_SPEED_MODE, leftChannel, neutral_duty);
+    ledc_update_duty(PWM_SPEED_MODE, leftChannel);
+    ledc_set_duty(PWM_SPEED_MODE, rightChannel, neutral_duty);
+    ledc_update_duty(PWM_SPEED_MODE, rightChannel);
 }
 
 void Minibot::writeMotor(uint8_t channel, float value) {
     if(emergencyStop || value < -1.0 || value > 1.0) {
-        ledcWrite(pins[channel], 9830);
+        stopAllMotors();
         return;
     }
-    float pulseMs = 0.5 * value + 1.5;
-    uint16_t duty = (uint16_t)((pulseMs / 10.0) * 65535.0);
-    ledcWrite(pins[channel], duty);
+    // Convert -1.0 to 1.0 into 1ms to 2ms pulse width
+    float pulseMs = 1.5 + (value * 0.5);
+    // Convert pulse width in ms to duty cycle
+    uint32_t duty = (uint32_t)((pulseMs / (1000.0 / PWM_FREQ)) * (1 << PWM_RES));
+    
+    ledc_set_duty(PWM_SPEED_MODE, (ledc_channel_t)channel, duty);
+    ledc_update_duty(PWM_SPEED_MODE, (ledc_channel_t)channel);
 }
 
 void Minibot::updateController() {
@@ -146,23 +198,9 @@ void Minibot::updateController() {
 }
 
 void Minibot::driveLeft(float value) {
-    writeMotor(0, value);
+    writeMotor(leftChannel, value);
 }
 
 void Minibot::driveRight(float value) {
-    writeMotor(1, value);
-}
-
-void Minibot::driveDCMotor(float value) {
-    writeMotor(2, value);
-}
-
-void Minibot::driveServoMotor(int angle) {
-    if(angle < -50 || angle > 50 || emergencyStop) {
-        ledcWrite(pins[3], 9830);
-        return;
-    }
-    float pulseMs = 0.01 * angle + 1.5;
-    uint16_t duty = (uint16_t)((pulseMs / 10.0) * 65535.0);
-    ledcWrite(pins[3], duty);
+    writeMotor(rightChannel, value);
 }
