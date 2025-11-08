@@ -24,10 +24,10 @@
 //#define ROBOT_TYPE_CUSTOM        // Write your own control code
 
 // Motor pin configuration (adjust if using different pins)
-#define LEFT_MOTOR_PIN   16    // Left motor PWM pin
-#define RIGHT_MOTOR_PIN  17    // Right motor PWM pin
-#define DC_MOTOR_PIN     18    // DC motor or back-left for mecanum
-#define SERVO_MOTOR_PIN  19    // Servo or back-right for mecanum
+#define LEFT_MOTOR_PIN   18    // Left motor PWM pin
+#define RIGHT_MOTOR_PIN  19    // Right motor PWM pin
+#define DC_MOTOR_PIN     20    // DC motor or back-left for mecanum
+#define SERVO_MOTOR_PIN  20    // Servo or back-right for mecanum
 
 // Advanced settings (usually don't need to change)
 #define DEADZONE 10            // Joystick deadzone (0-127)
