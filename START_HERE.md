@@ -41,18 +41,16 @@ Your minibot driver station system is **100% complete and ready to use**. Here's
 
 ---
 
-### Option B: Test System Without Hardware
-**Time: 2 minutes**
+### Option B: Test Driver Station GUI (Windows)
+**Time: 1 minute**
 
 ```bash
-# Terminal 1 - Simulated robots
-python demo_mode.py
-
-# Terminal 2 - Driver station
 python driver_station.py
 ```
 
-Test the full system without any physical robots!
+The GUI will open and you can see the interface. On Windows, demo mode robots won't appear due to a Windows UDP localhost limitation, but **real ESP32 robots WILL work perfectly!**
+
+See [ROBOT_DISCOVERY_FIX.md](ROBOT_DISCOVERY_FIX.md) for details.
 
 ---
 

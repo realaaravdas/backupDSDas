@@ -123,13 +123,15 @@ class DriverStation:
                 data, addr = self.udp_socket.recvfrom(1024)
                 message = data.decode('utf-8', errors='ignore')
                 
-                # Parse discovery message: "DISCOVER:<robotId>:<IP>"
+                # Parse discovery message: "DISCOVER:<robotId>:<IP>" or "DISCOVER:<robotId>:<IP>:<port>"
                 if message.startswith("DISCOVER:"):
                     parts = message.split(":")
                     if len(parts) >= 3:
                         robot_id = parts[1]
                         robot_ip = parts[2]
-                        
+                        # Check if discovery includes a port (for demo mode)
+                        discovery_port = int(parts[3]) if len(parts) >= 4 else DISCOVERY_PORT
+
                         if robot_id not in self.robots:
                             # Assign a port for this robot
                             port = COMMAND_PORT_BASE + len(self.robots)
@@ -140,15 +142,15 @@ class DriverStation:
                                 last_seen=time.time(),
                                 connected=False
                             )
-                            print(f"Discovered robot: {robot_id} at {robot_ip}")
+                            print(f"Discovered robot: {robot_id} at {robot_ip}:{discovery_port}")
                         else:
                             # Update last seen time
                             self.robots[robot_id].last_seen = time.time()
-                        
-                        # Send port assignment
+
+                        # Send port assignment to the discovery port
                         robot_info = self.robots[robot_id]
                         response = f"PORT:{robot_id}:{robot_info.port}"
-                        self.udp_socket.sendto(response.encode(), (robot_ip, DISCOVERY_PORT))
+                        self.udp_socket.sendto(response.encode(), (robot_ip, discovery_port))
                         robot_info.connected = True
                         
             except socket.timeout:

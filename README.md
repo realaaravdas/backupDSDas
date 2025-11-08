@@ -72,6 +72,9 @@ Click orange "Refresh" button to discover robots, pair controllers, and drive!
    - Press `2` for Teleop mode
    - Use controller joysticks to drive!
 
+### ⚠️ Important: Demo Mode on Windows
+**Note:** If robots don't appear when testing demo mode on Windows, this is expected! Windows blocks UDP localhost loopback on the same port. **Real ESP32 robots WILL work correctly** because they're on different machines. See [ROBOT_DISCOVERY_FIX.md](ROBOT_DISCOVERY_FIX.md) for details.
+
 ## Controls
 
 ### Keyboard Controls
