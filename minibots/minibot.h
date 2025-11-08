@@ -5,81 +5,61 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
-// PWM Channel Definitions
-const int LEFT_PWM_CHANNEL = 0;
-const int RIGHT_PWM_CHANNEL = 1;
-const int DC_PWM_CHANNEL = 2;
-const int SERVO_PWM_CHANNEL = 3;
-const int freq = 100;
-const int resolution = 16;
+// PWM settings
+#define PWM_FREQ 100
+#define PWM_RES 16
 
 // WiFi Configuration
 #define WIFI_SSID "WATCHTOWER"
 #define WIFI_PASSWORD "lancerrobotics"
 #define DISCOVERY_PORT 12345
-#define COMMAND_PORT_BASE 12346
 
 class Minibot {
 private:
     const char* robotId;
-    int leftPin;
-    int rightPin;
-    int dcMotorPin;
-    int servoMotorPin;
+    uint8_t pins[4];  // [left, right, dc, servo]
 
-    int leftX;
-    int leftY;
-    int rightX;
-    int rightY;
+    uint8_t leftX, leftY, rightX, rightY;
+    uint8_t buttons;  // bitfield
 
-    bool cross;
-    bool circle;
-    bool square;
-    bool triangle;
-
-    String gameStatus;
+    uint8_t gameStatus;  // 0=standby, 1=teleop, 2=auto
     bool emergencyStop;
     bool connected;
-    unsigned int assignedPort;
-    unsigned long lastPingTime;
-    unsigned long lastCommandTime;
+    uint16_t assignedPort;
+    uint32_t lastPingTime;
+    uint32_t lastCommandTime;
 
     WiFiUDP udp;
-    char incomingPacket[256];
+    char packet[256];
 
     void sendDiscoveryPing();
     void stopAllMotors();
-
+    void writeMotor(uint8_t channel, float value);
 
 public:
-    // Constructor
-    Minibot(const char* robotId,
-          int leftMotorPin = 16, int rightMotorPin = 17,
-          int dcMotorPin = 18, int servoMotorPin = 19);
+    Minibot(const char* id, uint8_t l=16, uint8_t r=17, uint8_t d=18, uint8_t s=19);
 
-    // Update controller state from UDP packets
     void updateController();
 
-    // Getter methods for joystick axes
-    int getLeftX();
-    int getLeftY();
-    int getRightX();
-    int getRightY();
+    // Getters
+    inline uint8_t getLeftX() { return leftX; }
+    inline uint8_t getLeftY() { return leftY; }
+    inline uint8_t getRightX() { return rightX; }
+    inline uint8_t getRightY() { return rightY; }
 
-    // Getter methods for buttons
-    bool getCross();
-    bool getCircle();
-    bool getSquare();
-    bool getTriangle();
+    inline bool getCross() { return buttons & 0x01; }
+    inline bool getCircle() { return buttons & 0x02; }
+    inline bool getSquare() { return buttons & 0x04; }
+    inline bool getTriangle() { return buttons & 0x08; }
 
-    // Get game status
-    String getGameStatus();
+    inline bool isTeleop() { return gameStatus == 1; }
+    inline bool isAuto() { return gameStatus == 2; }
 
-    // Motor control methods
-    bool driveDCMotor(float value);      // value: -1.0 to 1.0
-    bool driveLeft(float value);         // value: -1.0 to 1.0
-    bool driveRight(float value);        // value: -1.0 to 1.0
-    bool driveServoMotor(int angle);     // angle: -50 to 50 degrees
+    // Motor control
+    void driveLeft(float value);
+    void driveRight(float value);
+    void driveDCMotor(float value);
+    void driveServoMotor(int angle);
 };
 
-#endif // MINIBOT_H
+#endif

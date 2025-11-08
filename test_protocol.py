@@ -60,7 +60,7 @@ def test_controller_packet():
     assert (button_byte & 0x04) == 4, "Square button should be pressed"
     assert (button_byte & 0x08) == 0, "Triangle button should not be pressed"
     
-    print("✓ Controller packet format test passed!")
+    print("[OK] Controller packet format test passed!")
 
 def test_discovery_message():
     """Test discovery message format"""
@@ -75,7 +75,7 @@ def test_discovery_message():
     assert parts[1] == robot_id, f"Robot ID should be {robot_id}"
     assert parts[2] == ip, f"IP should be {ip}"
     
-    print("✓ Discovery message format test passed!")
+    print("[OK] Discovery message format test passed!")
 
 def test_port_assignment():
     """Test port assignment message format"""
@@ -90,7 +90,7 @@ def test_port_assignment():
     assert parts[1] == robot_id, f"Robot ID should be {robot_id}"
     assert int(parts[2]) == port, f"Port should be {port}"
     
-    print("✓ Port assignment format test passed!")
+    print("[OK] Port assignment format test passed!")
 
 def test_game_status():
     """Test game status message format"""
@@ -106,7 +106,7 @@ def test_game_status():
     assert parsed_id == robot_id, f"Robot ID should be {robot_id}"
     assert parsed_status == status, f"Status should be {status}"
     
-    print("✓ Game status format test passed!")
+    print("[OK] Game status format test passed!")
 
 def test_emergency_stop():
     """Test emergency stop messages"""
@@ -116,7 +116,7 @@ def test_emergency_stop():
     assert estop_enable == "ESTOP", "Emergency stop enable should be ESTOP"
     assert estop_disable == "ESTOP_OFF", "Emergency stop disable should be ESTOP_OFF"
     
-    print("✓ Emergency stop format test passed!")
+    print("[OK] Emergency stop format test passed!")
 
 def test_axis_mapping():
     """Test that joystick axis mapping is correct"""
@@ -135,7 +135,7 @@ def test_axis_mapping():
     mapped = int((joystick_value + 1.0) * 127.5)
     assert mapped == 0, f"Full backward should map to 0, got {mapped}"
     
-    print("✓ Axis mapping test passed!")
+    print("[OK] Axis mapping test passed!")
 
 if __name__ == "__main__":
     print("Running protocol compatibility tests...\n")
@@ -147,5 +147,5 @@ if __name__ == "__main__":
     test_emergency_stop()
     test_axis_mapping()
     
-    print("\n✅ All protocol tests passed!")
+    print("\n[SUCCESS] All protocol tests passed!")
     print("The driver station protocol is compatible with minibot.cpp")

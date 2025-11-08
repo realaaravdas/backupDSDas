@@ -299,10 +299,23 @@ class DriverStation:
                 controller.right_x = max(0, min(255, right_x))
                 controller.right_y = max(0, min(255, right_y))
     
+    def _refresh_robots(self):
+        """Clear robot list and force rediscovery"""
+        print("Refreshing robot list...")
+        self.robots.clear()
+        self.robot_controller_pairs.clear()
+        self.selected_robot = None
+        print("Robot list cleared - waiting for discovery...")
+
     def _handle_mouse_click(self, pos):
         """Handle mouse clicks for UI interactions"""
         x, y = pos
-        
+
+        # Check if clicking refresh button
+        if 450 <= x <= 550 and 120 <= y <= 145:
+            self._refresh_robots()
+            return
+
         # Check if clicking on robot boxes (left side)
         robot_y_start = 150
         robot_height = 120
@@ -312,7 +325,7 @@ class DriverStation:
                 self.selected_robot = robot_id
                 print(f"Selected robot: {robot_id}")
                 return
-        
+
         # Check if clicking on controller boxes (right side)
         controller_y_start = 150
         controller_height = 120
@@ -322,7 +335,7 @@ class DriverStation:
                 self.selected_controller = i if i in self.controllers else None
                 print(f"Selected controller: {i}")
                 return
-        
+
         # Check if clicking pair button
         if 500 <= x <= 700 and 500 <= y <= 550:
             if self.selected_robot and self.selected_controller is not None:
@@ -353,6 +366,12 @@ class DriverStation:
         # Draw robots (left side)
         robot_label = self.font.render("Robots:", True, WHITE)
         self.screen.blit(robot_label, (50, 120))
+
+        # Draw refresh button
+        refresh_color = ORANGE
+        pygame.draw.rect(self.screen, refresh_color, (450, 120, 100, 25))
+        refresh_text = self.font.render("Refresh", True, BLACK)
+        self.screen.blit(refresh_text, (465, 122))
         
         robot_y = 150
         for robot_id in sorted(self.robots.keys()):

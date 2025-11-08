@@ -1,221 +1,168 @@
 #include "minibot.h"
 
-// Constructor
-Minibot::Minibot(const char* robotId,
-                 int leftMotorPin, int rightMotorPin,
-                 int dcMotorPin, int servoMotorPin)
-                  : robotId(robotId),
-                      leftPin(leftMotorPin), rightPin(rightMotorPin),
-                      dcMotorPin(dcMotorPin), servoMotorPin(servoMotorPin),
-                      leftX(127), leftY(127), rightX(127), rightY(127),
-                      cross(false), circle(false), square(false), triangle(false),
-                      gameStatus("standby"), emergencyStop(false), connected(false),
-                      assignedPort(0), lastPingTime(0), lastCommandTime(0)
+Minibot::Minibot(const char* id, uint8_t l, uint8_t r, uint8_t d, uint8_t s)
+    : robotId(id), leftX(127), leftY(127), rightX(127), rightY(127),
+      buttons(0), gameStatus(0), emergencyStop(false), connected(false),
+      assignedPort(0), lastPingTime(0), lastCommandTime(0)
 {
-  Serial.begin(115200);
+    pins[0] = l; pins[1] = r; pins[2] = d; pins[3] = s;
 
-  pinMode(leftPin, OUTPUT);
-  pinMode(rightPin, OUTPUT);
-  pinMode(dcMotorPin, OUTPUT);
-  pinMode(servoMotorPin, OUTPUT);
-  bool left = ledcAttachChannel(leftPin, freq, resolution, LEFT_PWM_CHANNEL);
-  bool right = ledcAttachChannel(rightPin, freq, resolution, RIGHT_PWM_CHANNEL);
-  bool dc = ledcAttachChannel(dcMotorPin, freq, resolution, DC_PWM_CHANNEL);
-  bool servo = ledcAttachChannel(servoMotorPin, freq, resolution, SERVO_PWM_CHANNEL);
+    Serial.begin(115200);
+    Serial.println("\n=== Minibot Starting ===");
 
-  Serial.println(left);
-  Serial.println(right);
-  Serial.println(dc);
-  Serial.println(servo);
+    // Setup PWM channels
+    for(uint8_t i = 0; i < 4; i++) {
+        pinMode(pins[i], OUTPUT);
+        ledcAttach(pins[i], PWM_FREQ, PWM_RES);
+    }
 
-  // Wi-Fi connection
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nConnected! IP: " + WiFi.localIP().toString());
+    // Connect to WiFi
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.print("WiFi");
+    while(WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nIP: " + WiFi.localIP().toString());
 
-  // Start UDP on discovery port
-  udp.begin(DISCOVERY_PORT);
-  Serial.println("Listening on discovery port " + String(DISCOVERY_PORT));
-
-  // Stop all motors initially
-  stopAllMotors();
+    // Start UDP
+    udp.begin(DISCOVERY_PORT);
+    stopAllMotors();
+    Serial.println("Ready!");
 }
 
-
-
 void Minibot::sendDiscoveryPing() {
-  // Format: "DISCOVER:<robotId>:<IP>"
-  String msg = "DISCOVER:" + String(robotId) + ":" + WiFi.localIP().toString();
-  udp.beginPacket(IPAddress(255, 255, 255, 255), DISCOVERY_PORT);
-  udp.write((const uint8_t*)msg.c_str(), msg.length());
-  udp.endPacket();
-  Serial.println("Sent discovery ping: " + msg);
+    char msg[64];
+    snprintf(msg, 64, "DISCOVER:%s:%s", robotId, WiFi.localIP().toString().c_str());
+    udp.beginPacket(IPAddress(255,255,255,255), DISCOVERY_PORT);
+    udp.write((uint8_t*)msg, strlen(msg));
+    udp.endPacket();
 }
 
 void Minibot::stopAllMotors() {
-  driveLeft(0);
-  driveRight(0);
-  driveDCMotor(0);
-  driveServoMotor(0);
+    for(uint8_t i = 0; i < 4; i++) {
+        ledcWrite(pins[i], 9830); // 1.5ms neutral
+    }
+}
+
+void Minibot::writeMotor(uint8_t channel, float value) {
+    if(emergencyStop || value < -1.0 || value > 1.0) {
+        ledcWrite(pins[channel], 9830);
+        return;
+    }
+    float pulseMs = 0.5 * value + 1.5;
+    uint16_t duty = (uint16_t)((pulseMs / 10.0) * 65535.0);
+    ledcWrite(pins[channel], duty);
 }
 
 void Minibot::updateController() {
-  // Send discovery pings if not connected (every 2 seconds)
-  unsigned long now = millis();
-  if (!connected && (now - lastPingTime > 2000)) {
-    sendDiscoveryPing();
-    lastPingTime = now;
-  }
+    uint32_t now = millis();
 
-  // Check for timeout (5 seconds without command = disconnect)
-  if (connected && (now - lastCommandTime > 5000)) {
-    Serial.println("Connection timeout - reverting to discovery mode");
-    connected = false;
-    assignedPort = 0;
-    udp.stop();
-    udp.begin(DISCOVERY_PORT);
-    stopAllMotors();
-  }
+    // Send discovery if not connected
+    if(!connected && (now - lastPingTime > 2000)) {
+        sendDiscoveryPing();
+        lastPingTime = now;
+    }
 
-  int packetSize = udp.parsePacket();
-  if (packetSize) {
-    int len = udp.read(incomingPacket, 255);
-    if (len > 0) incomingPacket[len] = '\0';
+    // Check timeout
+    if(connected && (now - lastCommandTime > 5000)) {
+        Serial.println("Timeout");
+        connected = false;
+        assignedPort = 0;
+        udp.stop();
+        udp.begin(DISCOVERY_PORT);
+        stopAllMotors();
+    }
 
-    String packetStr = String(incomingPacket);
+    // Check for packets
+    int len = udp.parsePacket();
+    if(!len) return;
 
-    // Handle port assignment response: "PORT:<robotId>:<port>"
-    if (!connected && packetStr.startsWith("PORT:")) {
-      int sep1 = packetStr.indexOf(':', 5);
-      if (sep1 != -1) {
-        String name = packetStr.substring(5, sep1);
-        if (name == robotId) {
-          assignedPort = packetStr.substring(sep1 + 1).toInt();
-          if (assignedPort > 0) {
-            udp.stop();
-            udp.begin(assignedPort);
-            connected = true;
-            lastCommandTime = now;
-            Serial.println("Assigned port " + String(assignedPort) + " - connected!");
-          }
+    len = udp.read(packet, 255);
+    if(len <= 0) return;
+    packet[len] = '\0';
+
+    // PORT assignment
+    if(!connected && strncmp(packet, "PORT:", 5) == 0) {
+        char* sep = strchr(packet + 5, ':');
+        if(sep) {
+            *sep = '\0';
+            if(strcmp(packet + 5, robotId) == 0) {
+                assignedPort = atoi(sep + 1);
+                if(assignedPort > 0) {
+                    udp.stop();
+                    udp.begin(assignedPort);
+                    connected = true;
+                    lastCommandTime = now;
+                    Serial.println("Connected: " + String(assignedPort));
+                }
+            }
         }
-      }
-      return;
+        return;
     }
 
-    // Handle emergency stop: "ESTOP"
-    if (packetStr == "ESTOP") {
-      emergencyStop = true;
-      stopAllMotors();
-      Serial.println("EMERGENCY STOP ACTIVATED");
-      lastCommandTime = now;
-      return;
-    }
-
-    // Handle emergency stop release: "ESTOP_OFF"
-    if (packetStr == "ESTOP_OFF") {
-      emergencyStop = false;
-      Serial.println("Emergency stop released");
-      lastCommandTime = now;
-      return;
-    }
-
-    // Only process movement commands if connected and not emergency stopped
-    if (!connected || emergencyStop) return;
-
-    // Check if it's a game status packet (text format)
-    if (packetStr.startsWith(robotId)) {
-      int sepIndex = packetStr.indexOf(':');
-      if (sepIndex != -1) {
-        gameStatus = packetStr.substring(sepIndex + 1);
+    // ESTOP
+    if(strcmp(packet, "ESTOP") == 0) {
+        emergencyStop = true;
+        stopAllMotors();
         lastCommandTime = now;
-      }
+        Serial.println("ESTOP!");
+        return;
     }
 
-    // Decode controller data (binary format) - only in teleop mode
-    if (len >= 24 && gameStatus == "teleop") {
-      char robotName[17];
-      uint8_t axes[6];
-      uint8_t buttons[2];
-
-      memcpy(robotName, incomingPacket, 16);
-      robotName[16] = '\0';
-      memcpy(axes, incomingPacket + 16, 6);
-      memcpy(buttons, incomingPacket + 22, 2);
-
-      if (String(robotName) == robotId) {
-        leftX = axes[0];
-        leftY = axes[1];
-        rightX = axes[2];
-        rightY = axes[3];
-
-        cross = buttons[0] & 0x01;
-        circle = buttons[0] & 0x02;
-        square = buttons[0] & 0x04;
-        triangle = buttons[0] & 0x08;
-
+    if(strcmp(packet, "ESTOP_OFF") == 0) {
+        emergencyStop = false;
         lastCommandTime = now;
-      }
+        Serial.println("ESTOP OFF");
+        return;
     }
-  }
+
+    if(!connected || emergencyStop) return;
+
+    // Game status
+    if(strncmp(packet, robotId, strlen(robotId)) == 0 && packet[strlen(robotId)] == ':') {
+        char* status = packet + strlen(robotId) + 1;
+        if(strcmp(status, "standby") == 0) gameStatus = 0;
+        else if(strcmp(status, "teleop") == 0) gameStatus = 1;
+        else if(strcmp(status, "autonomous") == 0) gameStatus = 2;
+        lastCommandTime = now;
+    }
+
+    // Controller data (binary, 24 bytes)
+    if(len >= 24 && gameStatus == 1) {
+        char name[17];
+        memcpy(name, packet, 16);
+        name[16] = '\0';
+
+        if(strcmp(name, robotId) == 0) {
+            leftX = packet[16];
+            leftY = packet[17];
+            rightX = packet[18];
+            rightY = packet[19];
+            buttons = packet[22];
+            lastCommandTime = now;
+        }
+    }
 }
 
-int Minibot::getLeftX() { return leftX; }
-int Minibot::getLeftY() { return leftY; }
-int Minibot::getRightX() { return rightX; }
-int Minibot::getRightY() { return rightY; }
-
-bool Minibot::getCross() { return cross; }
-bool Minibot::getCircle() { return circle; }
-bool Minibot::getSquare() { return square; }
-bool Minibot::getTriangle() { return triangle; }
-
-String Minibot::getGameStatus() { return gameStatus; }
-
-bool Minibot::driveDCMotor(float value) {
-  if (value < -1 || value > 1)
-    {
-    return false;
-  }
-
-    float pulseWidthMs = 0.5 * value + 1.5;
-    int dutyCycle = (pulseWidthMs / 10.0) * 65535;
-    ledcWriteChannel(DC_PWM_CHANNEL, dutyCycle);
-  return true;
+void Minibot::driveLeft(float value) {
+    writeMotor(0, value);
 }
 
-bool Minibot::driveLeft(float value) {
-  if (value < -1 || value > 1)
-  {
-    return false;
-  }
-  float pulseWidthMs = 0.5 * value + 1.5;
-  int dutyCycle = (pulseWidthMs / 10.0) * 65535;
-  ledcWriteChannel(LEFT_PWM_CHANNEL, dutyCycle);
-  return true;
+void Minibot::driveRight(float value) {
+    writeMotor(1, value);
 }
 
-bool Minibot::driveRight(float value) {
-  if (value < -1 || value > 1)
-  {
-    return false;
-  }
-  float pulseWidthMs = 0.5 * value + 1.5;
-  int dutyCycle = (pulseWidthMs / 10.0) * 65535;
-  ledcWriteChannel(RIGHT_PWM_CHANNEL, dutyCycle);
-  return true;
+void Minibot::driveDCMotor(float value) {
+    writeMotor(2, value);
 }
 
-bool Minibot::driveServoMotor(int angle) {
-  if (angle < -50 || angle > 50) {
-    return false;
-  }
-  float pulseWidthMs = 0.01 * angle + 1.5;
-  int dutyCycle = (pulseWidthMs / 10.0) * 65535;
-  ledcWriteChannel(SERVO_PWM_CHANNEL, dutyCycle);
-  return true;
+void Minibot::driveServoMotor(int angle) {
+    if(angle < -50 || angle > 50 || emergencyStop) {
+        ledcWrite(pins[3], 9830);
+        return;
+    }
+    float pulseMs = 0.01 * angle + 1.5;
+    uint16_t duty = (uint16_t)((pulseMs / 10.0) * 65535.0);
+    ledcWrite(pins[3], duty);
 }
