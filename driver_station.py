@@ -67,6 +67,16 @@ class DriverStation:
         pygame.init()
         pygame.joystick.init()
 
+        # Block joystick events to avoid pygame/Python 3.13 compatibility issue
+        # We'll poll joystick state directly instead
+        pygame.event.set_blocked(pygame.JOYAXISMOTION)
+        pygame.event.set_blocked(pygame.JOYBALLMOTION)
+        pygame.event.set_blocked(pygame.JOYHATMOTION)
+        pygame.event.set_blocked(pygame.JOYBUTTONDOWN)
+        pygame.event.set_blocked(pygame.JOYBUTTONUP)
+        pygame.event.set_blocked(pygame.JOYDEVICEADDED)
+        pygame.event.set_blocked(pygame.JOYDEVICEREMOVED)
+
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
         pygame.display.set_caption("Minibot Driver Station")
         self.clock = pygame.time.Clock()
@@ -250,81 +260,115 @@ class DriverStation:
     
     def _update_controllers(self):
         """Update controller states from pygame events"""
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.running = False
+        try:
+            # Pump events first to avoid internal pygame errors
+            pygame.event.pump()
 
-            elif event.type == pygame.VIDEORESIZE:
-                self.width = event.w
-                self.height = event.h
-                self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
-
-            elif event.type == pygame.MOUSEWHEEL:
-                # Scroll robot list if mouse over left side
-                mouse_x, mouse_y = pygame.mouse.get_pos()
-                if mouse_x < self.width // 2:
-                    self.robot_scroll -= event.y * 20
-                    self.robot_scroll = max(0, self.robot_scroll)
-                else:
-                    self.controller_scroll -= event.y * 20
-                    self.controller_scroll = max(0, self.controller_scroll)
-
-            elif event.type == pygame.JOYBUTTONDOWN or event.type == pygame.JOYBUTTONUP:
-                controller_index = event.joy
-                if controller_index in self.controllers:
-                    controller = self.controllers[controller_index]
-                    pressed = (event.type == pygame.JOYBUTTONDOWN)
-                    
-                    # PS5 controller button mappings
-                    if event.button == 0:  # Cross
-                        controller.cross = pressed
-                    elif event.button == 1:  # Circle
-                        controller.circle = pressed
-                    elif event.button == 2:  # Square
-                        controller.square = pressed
-                    elif event.button == 3:  # Triangle
-                        controller.triangle = pressed
-            
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
                     self.running = False
-                elif event.key == pygame.K_SPACE:
-                    # Toggle emergency stop
-                    self.emergency_stop = not self.emergency_stop
-                    self._send_emergency_stop(self.emergency_stop)
-                    print(f"Emergency stop: {self.emergency_stop}")
-                elif event.key == pygame.K_1:
-                    self.game_status = "standby"
-                    for robot_id in self.robots:
-                        self._send_game_status(robot_id)
-                    print("Game status: standby")
-                elif event.key == pygame.K_2:
-                    self.game_status = "teleop"
-                    for robot_id in self.robots:
-                        self._send_game_status(robot_id)
-                    print("Game status: teleop")
-                elif event.key == pygame.K_3:
-                    self.game_status = "autonomous"
-                    for robot_id in self.robots:
-                        self._send_game_status(robot_id)
-                    print("Game status: autonomous")
-            
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                self._handle_mouse_click(event.pos)
-        
-        # Update joystick axes
+
+                elif event.type == pygame.VIDEORESIZE:
+                    self.width = event.w
+                    self.height = event.h
+                    self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
+
+                elif event.type == pygame.MOUSEWHEEL:
+                    # Scroll robot list if mouse over left side
+                    mouse_x, mouse_y = pygame.mouse.get_pos()
+                    if mouse_x < self.width // 2:
+                        self.robot_scroll -= event.y * 20
+                        self.robot_scroll = max(0, self.robot_scroll)
+                    else:
+                        self.controller_scroll -= event.y * 20
+                        self.controller_scroll = max(0, self.controller_scroll)
+
+                # Note: Joystick button events disabled due to pygame/Python 3.13 compatibility issue
+                # Button states are polled directly below instead
+                # elif event.type == pygame.JOYBUTTONDOWN or event.type == pygame.JOYBUTTONUP:
+                #     controller_index = event.joy
+                #     if controller_index in self.controllers:
+                #         controller = self.controllers[controller_index]
+                #         pressed = (event.type == pygame.JOYBUTTONDOWN)
+                #
+                #         # PS5 controller button mappings
+                #         if event.button == 0:  # Cross
+                #             controller.cross = pressed
+                #         elif event.button == 1:  # Circle
+                #             controller.circle = pressed
+                #         elif event.button == 2:  # Square
+                #             controller.square = pressed
+                #         elif event.button == 3:  # Triangle
+                #             controller.triangle = pressed
+
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        self.running = False
+                    elif event.key == pygame.K_SPACE:
+                        # Toggle emergency stop
+                        self.emergency_stop = not self.emergency_stop
+                        self._send_emergency_stop(self.emergency_stop)
+                        print(f"Emergency stop: {self.emergency_stop}")
+                    elif event.key == pygame.K_1:
+                        self.game_status = "standby"
+                        for robot_id in self.robots:
+                            self._send_game_status(robot_id)
+                        print("Game status: standby")
+                    elif event.key == pygame.K_2:
+                        self.game_status = "teleop"
+                        for robot_id in self.robots:
+                            self._send_game_status(robot_id)
+                        print("Game status: teleop")
+                    elif event.key == pygame.K_3:
+                        self.game_status = "autonomous"
+                        for robot_id in self.robots:
+                            self._send_game_status(robot_id)
+                        print("Game status: autonomous")
+
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    self._handle_mouse_click(event.pos)
+        except Exception as e:
+            print(f"Error processing events: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Update joystick axes and buttons (polled directly to avoid pygame/Python 3.13 event bug)
         for controller in self.controllers.values():
             if controller.joystick and controller.connected:
-                # Map joystick axes from -1..1 to 0..255
-                left_x = int((controller.joystick.get_axis(0) + 1.0) * 127.5)
-                left_y = int((controller.joystick.get_axis(1) + 1.0) * 127.5)
-                right_x = int((controller.joystick.get_axis(2) + 1.0) * 127.5)
-                right_y = int((controller.joystick.get_axis(3) + 1.0) * 127.5)
-                
-                controller.left_x = max(0, min(255, left_x))
-                controller.left_y = max(0, min(255, left_y))
-                controller.right_x = max(0, min(255, right_x))
-                controller.right_y = max(0, min(255, right_y))
+                try:
+                    # Check number of axes available
+                    num_axes = controller.joystick.get_numaxes()
+
+                    # Map joystick axes from -1..1 to 0..255
+                    # Use default value of 0.0 if axis doesn't exist
+                    left_x_val = controller.joystick.get_axis(0) if num_axes > 0 else 0.0
+                    left_y_val = controller.joystick.get_axis(1) if num_axes > 1 else 0.0
+                    right_x_val = controller.joystick.get_axis(2) if num_axes > 2 else 0.0
+                    right_y_val = controller.joystick.get_axis(3) if num_axes > 3 else 0.0
+
+                    left_x = int((left_x_val + 1.0) * 127.5)
+                    left_y = int((left_y_val + 1.0) * 127.5)
+                    right_x = int((right_x_val + 1.0) * 127.5)
+                    right_y = int((right_y_val + 1.0) * 127.5)
+
+                    controller.left_x = max(0, min(255, left_x))
+                    controller.left_y = max(0, min(255, left_y))
+                    controller.right_x = max(0, min(255, right_x))
+                    controller.right_y = max(0, min(255, right_y))
+
+                    # Poll button states directly (avoids pygame event bug)
+                    num_buttons = controller.joystick.get_numbuttons()
+                    if num_buttons > 0:
+                        controller.cross = controller.joystick.get_button(0)
+                    if num_buttons > 1:
+                        controller.circle = controller.joystick.get_button(1)
+                    if num_buttons > 2:
+                        controller.square = controller.joystick.get_button(2)
+                    if num_buttons > 3:
+                        controller.triangle = controller.joystick.get_button(3)
+
+                except Exception as e:
+                    print(f"Error reading controller {controller.index} state: {e}")
     
     def _refresh_robots(self):
         """Clear robot list and force rediscovery"""
