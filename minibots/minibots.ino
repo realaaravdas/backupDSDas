@@ -1,157 +1,256 @@
-/*
- * MINIBOT DRIVER STATION - ROBOT CODE
- * Plug-and-play ready for ESP32
- *
- * QUICK START:
- * 1. Change ROBOT_NAME to your robot's unique name (line 15)
- * 2. Choose your robot type (line 18) - uncomment ONE option
- * 3. Adjust pin numbers if needed (lines 21-24)
- * 4. Upload to ESP32
- * 5. Done! Robot will auto-connect to driver station
- */
-
-#include "minibot.h"
+#include <WiFi.h>
+#include <WiFiUdp.h>
 
 // ============ CONFIGURATION ============
+// WiFi credentials
+const char WIFI_SSID[] = "WATCHTOWER";
+const char WIFI_PASSWORD[] = "lancerrobotics";
 
-// Set your robot's unique name here (must match driver station)
-#define ROBOT_NAME "testingDas"  // Change this to: "robot2", "yourname", etc.
+// Robot identification - CHANGE THIS FOR EACH ROBOT
+const char ROBOT_ID[] = "robot1";
 
-// Choose your robot type (uncomment ONE):
-#define ROBOT_TYPE_TANK_DRIVE      // Two motors, left and right (most common)
-//#define ROBOT_TYPE_ARCADE_DRIVE  // Two motors, arcade-style control
-//#define ROBOT_TYPE_CUSTOM        // Write your own control code
+// Network ports
+const uint16_t DISCOVERY_PORT = 12345;
 
-// Motor pin configuration (adjust if using different pins)
-#define LEFT_MOTOR_PIN   18    // Left motor PWM pin
-#define RIGHT_MOTOR_PIN  19    // Right motor PWM pin
+// Motor pins
+const uint8_t MOTOR_LEFT_PIN = 16;
+const uint8_t MOTOR_RIGHT_PIN = 19;
 
-// Advanced settings (usually don't need to change)
-#define DEADZONE 10            // Joystick deadzone (0-127)
-#define MOTOR_REVERSE_LEFT  false   // Set true to reverse left motor
-#define MOTOR_REVERSE_RIGHT false   // Set true to reverse right motor
-#define MAX_SPEED 1.0          // Max speed multiplier (0.0 to 1.0)
+// PWM configuration
+const uint16_t PWM_FREQ = 100;
+const uint8_t PWM_RES = 16;
+const uint16_t PWM_NEUTRAL = 9830;  // 1.5ms pulse
+const uint16_t PWM_MIN = 6553;      // 1.0ms pulse
+const uint16_t PWM_MAX = 13107;     // 2.0ms pulse
 
-// ============ END CONFIGURATION ============
+// Timing constants
+const uint16_t DISCOVERY_INTERVAL = 2000;  // ms
+const uint16_t COMMAND_TIMEOUT = 5000;     // ms
 
-// Create robot instance
-Minibot bot(ROBOT_NAME, LEFT_MOTOR_PIN, RIGHT_MOTOR_PIN);
+// ============ GLOBAL STATE ============
+WiFiUDP udp;
+uint16_t assignedPort = 0;
+bool portAssigned = false;
+unsigned long lastDiscovery = 0;
+unsigned long lastCommand = 0;
 
-// Helper function: Apply deadzone and scale
-float applyDeadzone(uint8_t value, uint8_t deadzone = DEADZONE) {
-    // Convert 0-255 to -1.0 to 1.0
-    float scaled = (value - 127.5) / 127.5;
+// Game state
+enum { STANDBY = 0, TELEOP = 1, AUTO = 2 };
+uint8_t gameStatus = STANDBY;
+bool emergencyStop = false;
 
-    // Apply deadzone
-    if (abs(scaled) < (deadzone / 127.5)) {
-        return 0.0;
-    }
+// Controller data
+uint8_t leftX = 127, leftY = 127, rightX = 127, rightY = 127;
+uint16_t buttons = 0;
 
-    // Apply max speed limit
-    return constrain(scaled * MAX_SPEED, -1.0, 1.0);
+// ============ HELPER FUNCTIONS ============
+
+void connectWiFi() {
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nConnected!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
 }
 
+void sendDiscovery() {
+  char msg[64];
+  snprintf(msg, sizeof(msg), "DISCOVER:%s:%s",
+           ROBOT_ID, WiFi.localIP().toString().c_str());
+
+  udp.beginPacket("255.255.255.255", DISCOVERY_PORT);
+  udp.write((uint8_t*)msg, strlen(msg));
+  udp.endPacket();
+
+  Serial.print("Discovery: ");
+  Serial.println(msg);
+}
+
+int speedToPWM(float speed) {
+  // Clamp to [-1.0, 1.0]
+  if (speed > 1.0) speed = 1.0;
+  if (speed < -1.0) speed = -1.0;
+
+  // Map to PWM
+  if (speed >= 0) {
+    return PWM_NEUTRAL + (int)(speed * (PWM_MAX - PWM_NEUTRAL));
+  } else {
+    return PWM_NEUTRAL + (int)(speed * (PWM_NEUTRAL - PWM_MIN));
+  }
+}
+
+void updateMotors() {
+  // Convert controller bytes (0-255) to speed (-1.0 to 1.0)
+  // Invert Y axis (controller forward is negative)
+  float leftSpeed = -(leftY - 127) / 127.0;
+  float rightSpeed = -(rightY - 127) / 127.0;
+
+  // Write to motors
+  ledcWrite(MOTOR_LEFT_PIN, speedToPWM(leftSpeed));
+  ledcWrite(MOTOR_RIGHT_PIN, speedToPWM(rightSpeed));
+}
+
+void stopMotors() {
+  ledcWrite(MOTOR_LEFT_PIN, PWM_NEUTRAL);
+  ledcWrite(MOTOR_RIGHT_PIN, PWM_NEUTRAL);
+}
+
+void parseTextPacket(char* packet) {
+  Serial.print("Text: ");
+  Serial.println(packet);
+
+  // PORT assignment: "PORT:<robotId>:<port>"
+  if (strncmp(packet, "PORT:", 5) == 0) {
+    char* idStart = packet + 5;
+    char* portStart = strchr(idStart, ':');
+    if (portStart) {
+      *portStart = '\0';
+      portStart++;
+
+      if (strcmp(idStart, ROBOT_ID) == 0) {
+        assignedPort = atoi(portStart);
+        portAssigned = true;
+        udp.begin(assignedPort);
+        Serial.print("Port assigned: ");
+        Serial.println(assignedPort);
+      }
+    }
+    return;
+  }
+
+  // Emergency stop
+  if (strcmp(packet, "ESTOP") == 0) {
+    emergencyStop = true;
+    stopMotors();
+    Serial.println("ESTOP ON");
+    return;
+  }
+
+  if (strcmp(packet, "ESTOP_OFF") == 0) {
+    emergencyStop = false;
+    Serial.println("ESTOP OFF");
+    return;
+  }
+
+  // Game status: "<robotId>:<status>"
+  char* statusStart = strchr(packet, ':');
+  if (statusStart) {
+    *statusStart = '\0';
+    statusStart++;
+
+    if (strcmp(packet, ROBOT_ID) == 0) {
+      if (strcmp(statusStart, "standby") == 0) {
+        gameStatus = STANDBY;
+        Serial.println("Mode: STANDBY");
+      } else if (strcmp(statusStart, "teleop") == 0) {
+        gameStatus = TELEOP;
+        Serial.println("Mode: TELEOP");
+      } else if (strcmp(statusStart, "autonomous") == 0) {
+        gameStatus = AUTO;
+        Serial.println("Mode: AUTO");
+      }
+    }
+  }
+}
+
+void parseBinaryPacket(uint8_t* packet) {
+  // Binary format (24 bytes):
+  // 0-15: Robot name
+  // 16-21: leftX, leftY, rightX, rightY, unused, unused
+  // 22-23: Button states
+
+  char packetName[16];
+  memcpy(packetName, packet, 16);
+  packetName[15] = '\0';
+
+  // Check if for us
+  if (strcmp(packetName, ROBOT_ID) != 0) return;
+
+  // Extract data
+  leftX = packet[16];
+  leftY = packet[17];
+  rightX = packet[18];
+  rightY = packet[19];
+  buttons = packet[22] | (packet[23] << 8);
+
+  Serial.printf("LX=%d LY=%d RX=%d RY=%d\n", leftX, leftY, rightX, rightY);
+}
+
+void receivePackets() {
+  int packetSize = udp.parsePacket();
+  if (packetSize == 0) return;
+
+  uint8_t buffer[256];
+  int len = udp.read(buffer, sizeof(buffer) - 1);
+  if (len <= 0) return;
+
+  lastCommand = millis();
+
+  // Binary packet (controller data) is exactly 24 bytes
+  if (len == 24) {
+    parseBinaryPacket(buffer);
+  } else {
+    // Text packet
+    buffer[len] = '\0';
+    parseTextPacket((char*)buffer);
+  }
+}
+
+// ============ ARDUINO FUNCTIONS ============
+
 void setup() {
-    // All setup is handled in Minibot constructor
-    Serial.println("Robot Type: "
-    #if defined(ROBOT_TYPE_TANK_DRIVE)
-        "Tank Drive"
-    #elif defined(ROBOT_TYPE_ARCADE_DRIVE)
-        "Arcade Drive"
-    #elif defined(ROBOT_TYPE_MECANUM)
-        "Mecanum Drive"
-    #elif defined(ROBOT_TYPE_CUSTOM)
-        "Custom"
-    #else
-        "NOT CONFIGURED - Please select a robot type!"
-    #endif
-    );
+  Serial.begin(115200);
+  Serial.println("\n=== Minibot Starting ===");
+  Serial.print("Robot ID: ");
+  Serial.println(ROBOT_ID);
+
+  // Setup motors
+  ledcAttach(MOTOR_LEFT_PIN, PWM_FREQ, PWM_RES);
+  ledcAttach(MOTOR_RIGHT_PIN, PWM_FREQ, PWM_RES);
+  stopMotors();
+
+  // Connect to WiFi
+  connectWiFi();
+
+  // Start UDP on discovery port
+  udp.begin(DISCOVERY_PORT);
+
+  Serial.println("Ready!");
 }
 
 void loop() {
-    // Get latest controller data from driver station
-    bot.updateController();
+  unsigned long now = millis();
 
-    // Only control motors in teleop mode
-    if (bot.isTeleop()) {
+  // Handle timeout - return to discovery
+  if (portAssigned && (now - lastCommand > COMMAND_TIMEOUT)) {
+    Serial.println("Timeout - back to discovery");
+    portAssigned = false;
+    assignedPort = 0;
+    stopMotors();
+    udp.begin(DISCOVERY_PORT);
+  }
 
-        // Get joystick values
-        float leftY = applyDeadzone(bot.getLeftY());
-        float rightY = applyDeadzone(bot.getRightY());
-        float rightX = applyDeadzone(bot.getRightX());
+  // Send discovery broadcast
+  if (!portAssigned || (now - lastDiscovery > DISCOVERY_INTERVAL)) {
+    sendDiscovery();
+    lastDiscovery = now;
+  }
 
-        // ========== ROBOT CONTROL CODE ==========
+  // Receive packets
+  receivePackets();
 
-        #if defined(ROBOT_TYPE_TANK_DRIVE)
-        // TANK DRIVE
-        // Left stick Y controls left motor
-        // Right stick Y controls right motor
-        {
-            float leftSpeed = -leftY;   // Negative because joystick up = negative
-            float rightSpeed = -rightY;
+  // Update motors (only in teleop mode, not estopped)
+  if (portAssigned && gameStatus == TELEOP && !emergencyStop) {
+    updateMotors();
+  } else {
+    stopMotors();
+  }
 
-            // Apply motor reversal if needed
-            if (MOTOR_REVERSE_LEFT) leftSpeed = -leftSpeed;
-            if (MOTOR_REVERSE_RIGHT) rightSpeed = -rightSpeed;
-
-            bot.driveLeft(leftSpeed);
-            bot.driveRight(rightSpeed);
-        }
-
-        #elif defined(ROBOT_TYPE_ARCADE_DRIVE)
-        // ARCADE DRIVE
-        // Left stick Y controls forward/backward
-        // Right stick X controls turning
-        {
-            float forward = -leftY;
-            float turn = rightX;
-
-            // Mix forward and turn for differential drive
-            float leftSpeed = forward + turn;
-            float rightSpeed = forward - turn;
-
-            // Normalize if over limits
-            float maxMag = max(abs(leftSpeed), abs(rightSpeed));
-            if (maxMag > 1.0) {
-                leftSpeed /= maxMag;
-                rightSpeed /= maxMag;
-            }
-
-            // Apply motor reversal if needed
-            if (MOTOR_REVERSE_LEFT) leftSpeed = -leftSpeed;
-            if (MOTOR_REVERSE_RIGHT) rightSpeed = -rightSpeed;
-
-            bot.driveLeft(leftSpeed);
-            bot.driveRight(rightSpeed);
-        }
-
-        #elif defined(ROBOT_TYPE_CUSTOM)
-        // CUSTOM ROBOT CODE
-        // Write your own control logic here
-        {
-            // Example: Simple forward/backward with left stick
-            bot.driveLeft(-leftY);
-            bot.driveRight(-leftY);
-
-            // TODO: Add your custom robot control code here
-            // You have access to:
-            //   - leftY, rightY, rightX (joystick values, -1.0 to 1.0)
-            //   - bot.getCross(), bot.getCircle(), etc. (button states)
-            //   - bot.driveLeft(speed), bot.driveRight(speed)
-        }
-
-        #else
-        #error "No robot type selected! Please uncomment one ROBOT_TYPE_* define above"
-        #endif
-
-        // ========== END ROBOT CONTROL ==========
-
-    } else {
-        // Not in teleop mode - stop all motors
-        bot.driveLeft(0);
-        bot.driveRight(0);
-    }
-
-    // Small delay for stability (don't remove)
-    delay(10);
+  delay(10);  // Small delay to prevent watchdog issues
 }

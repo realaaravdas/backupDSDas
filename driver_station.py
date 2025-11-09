@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 GUI Driver Station for Minibot Control System
-Supports 2 robots with PS5 controller pairing via pygame
+Supports unlimited robots and controllers with scrollable lists
+Resizable window with dynamic layout
 """
 
 import pygame
@@ -65,12 +66,16 @@ class DriverStation:
     def __init__(self):
         pygame.init()
         pygame.joystick.init()
-        
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
         pygame.display.set_caption("Minibot Driver Station")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 24)
         self.title_font = pygame.font.Font(None, 36)
+
+        # Window dimensions (updated on resize)
+        self.width = SCREEN_WIDTH
+        self.height = SCREEN_HEIGHT
         
         # Network setup
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -97,6 +102,8 @@ class DriverStation:
         # UI State
         self.selected_robot = None
         self.selected_controller = None
+        self.robot_scroll = 0
+        self.controller_scroll = 0
     
     def _discover_controllers(self):
         """Discover connected PS5 controllers"""
@@ -246,7 +253,22 @@ class DriverStation:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
-            
+
+            elif event.type == pygame.VIDEORESIZE:
+                self.width = event.w
+                self.height = event.h
+                self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
+
+            elif event.type == pygame.MOUSEWHEEL:
+                # Scroll robot list if mouse over left side
+                mouse_x, mouse_y = pygame.mouse.get_pos()
+                if mouse_x < self.width // 2:
+                    self.robot_scroll -= event.y * 20
+                    self.robot_scroll = max(0, self.robot_scroll)
+                else:
+                    self.controller_scroll -= event.y * 20
+                    self.controller_scroll = max(0, self.controller_scroll)
+
             elif event.type == pygame.JOYBUTTONDOWN or event.type == pygame.JOYBUTTONUP:
                 controller_index = event.joy
                 if controller_index in self.controllers:
@@ -316,8 +338,13 @@ class DriverStation:
         """Handle mouse clicks for UI interactions"""
         x, y = pos
 
+        # Dynamic layout calculations
+        left_panel_width = (self.width - 40) // 2
+        right_panel_x = self.width // 2 + 20
+
         # Check if clicking refresh button
-        if 450 <= x <= 550 and 120 <= y <= 145:
+        refresh_x = 150
+        if refresh_x <= x <= refresh_x + 100 and 120 <= y <= 145:
             self._refresh_robots()
             return
 
@@ -325,24 +352,30 @@ class DriverStation:
         robot_y_start = 150
         robot_height = 120
         for i, robot_id in enumerate(sorted(self.robots.keys())):
-            robot_y = robot_y_start + i * (robot_height + 10)
-            if 50 <= x <= 550 and robot_y <= y <= robot_y + robot_height:
-                self.selected_robot = robot_id
-                print(f"Selected robot: {robot_id}")
-                return
+            robot_y = robot_y_start + i * (robot_height + 10) - self.robot_scroll
+            if 20 <= x <= 20 + left_panel_width and robot_y <= y <= robot_y + robot_height:
+                # Check if visible
+                if robot_y >= 150 and robot_y < self.height - 150:
+                    self.selected_robot = robot_id
+                    print(f"Selected robot: {robot_id}")
+                    return
 
         # Check if clicking on controller boxes (right side)
         controller_y_start = 150
         controller_height = 120
-        for i in range(2):
-            controller_y = controller_y_start + i * (controller_height + 10)
-            if 650 <= x <= 1150 and controller_y <= y <= controller_y + controller_height:
-                self.selected_controller = i if i in self.controllers else None
-                print(f"Selected controller: {i}")
-                return
+        for i, controller_id in enumerate(sorted(self.controllers.keys())):
+            controller_y = controller_y_start + i * (controller_height + 10) - self.controller_scroll
+            if right_panel_x <= x <= right_panel_x + left_panel_width and controller_y <= y <= controller_y + controller_height:
+                # Check if visible
+                if controller_y >= 150 and controller_y < self.height - 150:
+                    self.selected_controller = controller_id
+                    print(f"Selected controller: {controller_id}")
+                    return
 
-        # Check if clicking pair button
-        if 500 <= x <= 700 and 500 <= y <= 550:
+        # Check if clicking pair button (bottom center)
+        pair_btn_x = self.width // 2 - 100
+        pair_btn_y = self.height - 100
+        if pair_btn_x <= x <= pair_btn_x + 200 and pair_btn_y <= y <= pair_btn_y + 50:
             if self.selected_robot and self.selected_controller is not None:
                 self.robot_controller_pairs[self.selected_robot] = self.selected_controller
                 print(f"Paired {self.selected_robot} with controller {self.selected_controller}")
@@ -352,76 +385,90 @@ class DriverStation:
     def _draw_ui(self):
         """Draw the user interface"""
         self.screen.fill(BLACK)
-        
+
+        # Dynamic layout calculations
+        left_panel_width = (self.width - 40) // 2
+        right_panel_x = self.width // 2 + 20
+
         # Title
         title = self.title_font.render("Minibot Driver Station", True, WHITE)
-        self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 20))
-        
+        self.screen.blit(title, (self.width // 2 - title.get_width() // 2, 20))
+
         # Game status indicator
         status_color = GREEN if self.game_status == "teleop" else YELLOW if self.game_status == "autonomous" else GRAY
         status_text = self.font.render(f"Status: {self.game_status.upper()}", True, status_color)
-        self.screen.blit(status_text, (SCREEN_WIDTH // 2 - status_text.get_width() // 2, 60))
-        
+        self.screen.blit(status_text, (self.width // 2 - status_text.get_width() // 2, 60))
+
         # Emergency stop indicator
         if self.emergency_stop:
             estop_text = self.title_font.render("EMERGENCY STOP", True, RED)
-            pygame.draw.rect(self.screen, RED, (SCREEN_WIDTH // 2 - 150, 90, 300, 40), 3)
-            self.screen.blit(estop_text, (SCREEN_WIDTH // 2 - estop_text.get_width() // 2, 95))
-        
-        # Draw robots (left side)
+            pygame.draw.rect(self.screen, RED, (self.width // 2 - 150, 90, 300, 40), 3)
+            self.screen.blit(estop_text, (self.width // 2 - estop_text.get_width() // 2, 95))
+
+        # Draw robots (left side with scrolling)
         robot_label = self.font.render("Robots:", True, WHITE)
-        self.screen.blit(robot_label, (50, 120))
+        self.screen.blit(robot_label, (20, 120))
 
         # Draw refresh button
-        refresh_color = ORANGE
-        pygame.draw.rect(self.screen, refresh_color, (450, 120, 100, 25))
+        refresh_x = 150
+        pygame.draw.rect(self.screen, ORANGE, (refresh_x, 120, 100, 25))
         refresh_text = self.font.render("Refresh", True, BLACK)
-        self.screen.blit(refresh_text, (465, 122))
-        
+        self.screen.blit(refresh_text, (refresh_x + 15, 122))
+
+        # Create a clipping region for scrollable robot list
+        robot_list_rect = pygame.Rect(20, 150, left_panel_width, self.height - 300)
+
         robot_y = 150
         for robot_id in sorted(self.robots.keys()):
             robot_info = self.robots[robot_id]
-            
-            # Draw robot box
-            color = BLUE if self.selected_robot == robot_id else DARK_GRAY
-            pygame.draw.rect(self.screen, color, (50, robot_y, 500, 120), 2)
-            
-            # Robot info
-            name_text = self.font.render(f"Robot: {robot_id}", True, WHITE)
-            ip_text = self.font.render(f"IP: {robot_info.ip}", True, GRAY)
-            port_text = self.font.render(f"Port: {robot_info.port}", True, GRAY)
-            status_text = self.font.render(
-                f"Status: {'Connected' if robot_info.connected else 'Disconnected'}",
-                True, GREEN if robot_info.connected else RED
-            )
-            
-            # Check if paired with controller
-            paired_controller = self.robot_controller_pairs.get(robot_id)
-            if paired_controller is not None:
-                pair_text = self.font.render(f"Paired with Controller {paired_controller}", True, YELLOW)
-                self.screen.blit(pair_text, (60, robot_y + 90))
-            
-            self.screen.blit(name_text, (60, robot_y + 10))
-            self.screen.blit(ip_text, (60, robot_y + 35))
-            self.screen.blit(port_text, (60, robot_y + 55))
-            self.screen.blit(status_text, (300, robot_y + 10))
-            
+            actual_y = robot_y - self.robot_scroll
+
+            # Only draw if visible
+            if actual_y + 120 >= 150 and actual_y < self.height - 150:
+                # Draw robot box
+                color = BLUE if self.selected_robot == robot_id else DARK_GRAY
+                pygame.draw.rect(self.screen, color, (20, actual_y, left_panel_width, 120), 2)
+
+                # Robot info
+                name_text = self.font.render(f"Robot: {robot_id}", True, WHITE)
+                ip_text = self.font.render(f"IP: {robot_info.ip}", True, GRAY)
+                port_text = self.font.render(f"Port: {robot_info.port}", True, GRAY)
+                status_text = self.font.render(
+                    f"Status: {'Connected' if robot_info.connected else 'Disconnected'}",
+                    True, GREEN if robot_info.connected else RED
+                )
+
+                # Check if paired with controller
+                paired_controller = self.robot_controller_pairs.get(robot_id)
+                if paired_controller is not None:
+                    pair_text = self.font.render(f"Paired with Ctrl {paired_controller}", True, YELLOW)
+                    self.screen.blit(pair_text, (30, actual_y + 90))
+
+                self.screen.blit(name_text, (30, actual_y + 10))
+                self.screen.blit(ip_text, (30, actual_y + 35))
+                self.screen.blit(port_text, (30, actual_y + 55))
+                self.screen.blit(status_text, (30 + left_panel_width - 200, actual_y + 10))
+
             robot_y += 130
-        
-        # Draw controllers (right side)
+
+        # Draw controllers (right side with scrolling)
         controller_label = self.font.render("Controllers:", True, WHITE)
-        self.screen.blit(controller_label, (650, 120))
-        
+        self.screen.blit(controller_label, (right_panel_x, 120))
+
         controller_y = 150
-        for i in range(2):
-            # Draw controller box
-            color = BLUE if self.selected_controller == i else DARK_GRAY
-            pygame.draw.rect(self.screen, color, (650, controller_y, 500, 120), 2)
-            
-            if i in self.controllers:
-                controller = self.controllers[i]
-                name_text = self.font.render(f"Controller {i}: {controller.name[:30]}", True, WHITE)
-                
+        for controller_id in sorted(self.controllers.keys()):
+            actual_y = controller_y - self.controller_scroll
+
+            # Only draw if visible
+            if actual_y + 120 >= 150 and actual_y < self.height - 150:
+                controller = self.controllers[controller_id]
+
+                # Draw controller box
+                color = BLUE if self.selected_controller == controller_id else DARK_GRAY
+                pygame.draw.rect(self.screen, color, (right_panel_x, actual_y, left_panel_width, 120), 2)
+
+                name_text = self.font.render(f"Controller {controller_id}: {controller.name[:20]}", True, WHITE)
+
                 # Joystick values
                 left_text = self.font.render(
                     f"Left: ({controller.left_x}, {controller.left_y})",
@@ -431,44 +478,39 @@ class DriverStation:
                     f"Right: ({controller.right_x}, {controller.right_y})",
                     True, GRAY
                 )
-                
+
                 # Button states
                 buttons_text = self.font.render(
                     f"X:{controller.cross} O:{controller.circle} □:{controller.square} △:{controller.triangle}",
                     True, GRAY
                 )
-                
-                self.screen.blit(name_text, (660, controller_y + 10))
-                self.screen.blit(left_text, (660, controller_y + 40))
-                self.screen.blit(right_text, (660, controller_y + 65))
-                self.screen.blit(buttons_text, (660, controller_y + 90))
-            else:
-                no_controller = self.font.render(f"Controller {i}: Not Connected", True, GRAY)
-                self.screen.blit(no_controller, (660, controller_y + 50))
-            
+
+                self.screen.blit(name_text, (right_panel_x + 10, actual_y + 10))
+                self.screen.blit(left_text, (right_panel_x + 10, actual_y + 40))
+                self.screen.blit(right_text, (right_panel_x + 10, actual_y + 65))
+                self.screen.blit(buttons_text, (right_panel_x + 10, actual_y + 90))
+
             controller_y += 130
-        
-        # Draw pairing button
+
+        # Draw pairing button at bottom
+        pair_btn_x = self.width // 2 - 100
+        pair_btn_y = self.height - 100
         pair_button_color = GREEN if self.selected_robot and self.selected_controller is not None else DARK_GRAY
-        pygame.draw.rect(self.screen, pair_button_color, (500, 500, 200, 50))
+        pygame.draw.rect(self.screen, pair_button_color, (pair_btn_x, pair_btn_y, 200, 50))
         pair_text = self.font.render("PAIR", True, WHITE)
-        self.screen.blit(pair_text, (580, 512))
-        
-        # Draw instructions
+        self.screen.blit(pair_text, (pair_btn_x + 80, pair_btn_y + 12))
+
+        # Draw instructions at bottom
         instructions = [
-            "Controls:",
-            "1: Standby | 2: Teleop | 3: Autonomous",
-            "SPACE: Emergency Stop",
-            "Click robot and controller, then PAIR button",
-            "ESC: Quit"
+            "Controls: 1=Standby | 2=Teleop | 3=Auto | SPACE=E-Stop | ESC=Quit | Scroll to see more"
         ]
-        
-        y_offset = 580
+
+        y_offset = self.height - 40
         for instruction in instructions:
             text = self.font.render(instruction, True, GRAY)
-            self.screen.blit(text, (50, y_offset))
+            self.screen.blit(text, (20, y_offset))
             y_offset += 25
-        
+
         pygame.display.flip()
     
     def run(self):
