@@ -1,17 +1,17 @@
 #include "minibot.h"
 
-Minibot::Minibot(const char* id, uint8_t l, uint8_t r, uint8_t d, uint8_t s)
+Minibot::Minibot(const char* id, uint8_t l, uint8_t r)
     : robotId(id), leftX(127), leftY(127), rightX(127), rightY(127),
       buttons(0), gameStatus(0), emergencyStop(false), connected(false),
       assignedPort(0), lastPingTime(0), lastCommandTime(0)
 {
-    pins[0] = l; pins[1] = r; pins[2] = d; pins[3] = s;
+    pins[0] = l; pins[1] = r;
 
     Serial.begin(115200);
     Serial.println("\n=== Minibot Starting ===");
 
     // Setup PWM channels
-    for(uint8_t i = 0; i < 4; i++) {
+    for(uint8_t i = 0; i < 2; i++) {
         pinMode(pins[i], OUTPUT);
         ledcAttach(pins[i], PWM_FREQ, PWM_RES);
     }
@@ -40,7 +40,7 @@ void Minibot::sendDiscoveryPing() {
 }
 
 void Minibot::stopAllMotors() {
-    for(uint8_t i = 0; i < 4; i++) {
+    for(uint8_t i = 0; i < 2; i++) {
         ledcWrite(pins[i], 9830); // 1.5ms neutral
     }
 }
@@ -151,18 +151,4 @@ void Minibot::driveLeft(float value) {
 
 void Minibot::driveRight(float value) {
     writeMotor(1, value);
-}
-
-void Minibot::driveDCMotor(float value) {
-    writeMotor(2, value);
-}
-
-void Minibot::driveServoMotor(int angle) {
-    if(angle < -50 || angle > 50 || emergencyStop) {
-        ledcWrite(pins[3], 9830);
-        return;
-    }
-    float pulseMs = 0.01 * angle + 1.5;
-    uint16_t duty = (uint16_t)((pulseMs / 10.0) * 65535.0);
-    ledcWrite(pins[3], duty);
 }
